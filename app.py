@@ -618,6 +618,14 @@ with st.sidebar:
         help="同時にダウンロードする画像数。大きいほど速いですがサーバー負荷が上がります",
     )
     st.divider()
+    st.subheader("🖼️ 表示設定")
+    display_mode = st.radio(
+        "プレビュー表示",
+        options=["縦1列", "3列グリッド"],
+        index=0,
+        horizontal=True,
+    )
+    st.divider()
     st.subheader("📚 取得範囲")
     mode = st.radio(
         "取得モード",
@@ -696,22 +704,32 @@ if extract_button:
                 st.divider()
                 st.subheader("🖼️ 抽出結果（プレビュー）")
 
-                cols_per_row = 3
-                for i in range(0, len(manga_images), cols_per_row):
-                    cols = st.columns(cols_per_row)
-                    for j, col in enumerate(cols):
-                        idx = i + j
-                        if idx >= len(manga_images):
-                            continue
-                        img_info = manga_images[idx]
-                        with col:
-                            ep = int(img_info.get("episode", 1) or 1)
-                            page = int(img_info.get("page", 1) or 1)
-                            st.image(
-                                img_info["data"],
-                                caption=f"第{ep}話 P{page} / {img_info.get('width')}x{img_info.get('height')} / {int(img_info.get('size',0))/1024:.1f}KB",
-                                use_container_width=True,
-                            )
+                if display_mode == "縦1列":
+                    for idx, img_info in enumerate(manga_images):
+                        ep = int(img_info.get("episode", 1) or 1)
+                        page = int(img_info.get("page", 1) or 1)
+                        st.image(
+                            img_info["data"],
+                            caption=f"第{ep}話 P{page} / {img_info.get('width')}x{img_info.get('height')} / {int(img_info.get('size',0))/1024:.1f}KB",
+                            use_container_width=True,
+                        )
+                else:
+                    cols_per_row = 3
+                    for i in range(0, len(manga_images), cols_per_row):
+                        cols = st.columns(cols_per_row)
+                        for j, col in enumerate(cols):
+                            idx = i + j
+                            if idx >= len(manga_images):
+                                continue
+                            img_info = manga_images[idx]
+                            with col:
+                                ep = int(img_info.get("episode", 1) or 1)
+                                page = int(img_info.get("page", 1) or 1)
+                                st.image(
+                                    img_info["data"],
+                                    caption=f"第{ep}話 P{page} / {img_info.get('width')}x{img_info.get('height')} / {int(img_info.get('size',0))/1024:.1f}KB",
+                                    use_container_width=True,
+                                )
 
                 st.divider()
                 st.subheader("⬇️ ダウンロード")
