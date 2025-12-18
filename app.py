@@ -9,6 +9,7 @@ import json
 import hashlib
 import zipfile
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 st.set_page_config(
@@ -472,54 +473,84 @@ def _cached_download_image(url: str, referer: str = "") -> bytes | None:
     return download_image(url, referer)
 
 
+def _download_and_validate_image(
+    img_info: dict,
+    min_size: int,
+    referer: str,
+) -> dict | None:
+    """1枚の画像をダウンロードしてバリデーション（並列処理用）"""
+    img_data = download_image(img_info["url"], referer)
+    if not img_data:
+        return None
+
+    if len(img_data) < min_size:
+        return None
+
+    try:
+        img = Image.open(BytesIO(img_data))
+        width, height = img.size
+        aspect_ratio = width / height if height > 0 else 0
+
+        if aspect_ratio > 3:
+            return None
+        if width < 200 or height < 200:
+            return None
+
+        return {
+            **img_info,
+            "data": img_data,
+            "width": width,
+            "height": height,
+            "size": len(img_data),
+        }
+    except Exception:
+        return None
+
+
 def filter_manga_images(
     images: list[dict],
     min_size: int = 50_000,
     referer: str = "",
     debug: bool = False,
+    max_workers: int = 10,
+    progress_callback=None,
 ) -> list[dict]:
-    """漫画画像をフィルタリング（サイズ/縦横/アスペクト比）"""
+    """漫画画像をフィルタリング（サイズ/縦横/アスペクト比）- 並列ダウンロード対応"""
     manga_images: list[dict] = []
+    total = len(images)
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_img = {
+            executor.submit(_download_and_validate_image, img_info, min_size, referer): img_info
+            for img_info in images
+        }
+
+        results_map: dict[str, dict] = {}
+
+        for future in as_completed(future_to_img):
+            img_info = future_to_img[future]
+            completed += 1
+
+            if progress_callback:
+                progress_callback(completed, total)
+
+            try:
+                result = future.result()
+                if result:
+                    results_map[img_info["url"]] = result
+                    if debug:
+                        st.write(f"✅ 取得成功: {img_info['url'][:60]}...")
+                else:
+                    if debug:
+                        st.write(f"❌ フィルタ除外: {img_info['url'][:60]}...")
+            except Exception as e:
+                if debug:
+                    st.write(f"⚠️ エラー: {img_info['url'][:60]}... - {e}")
 
     for img_info in images:
-        img_data = _cached_download_image(img_info["url"], referer)
-        if not img_data:
-            if debug:
-                st.write(f"ダウンロード失敗: {img_info['url'][:60]}...")
-            continue
-
-        if len(img_data) < min_size:
-            if debug:
-                st.write(f"サイズ不足 ({len(img_data)} bytes): {img_info['url'][:60]}...")
-            continue
-
-        try:
-            img = Image.open(BytesIO(img_data))
-            width, height = img.size
-            aspect_ratio = width / height if height > 0 else 0
-
-            if aspect_ratio > 3:
-                if debug:
-                    st.write(f"アスペクト比除外 ({aspect_ratio:.2f}): {img_info['url'][:60]}...")
-                continue
-            if width < 200 or height < 200:
-                if debug:
-                    st.write(f"サイズ除外 ({width}x{height}): {img_info['url'][:60]}...")
-                continue
-
-            manga_images.append(
-                {
-                    **img_info,
-                    "data": img_data,
-                    "width": width,
-                    "height": height,
-                    "size": len(img_data),
-                }
-            )
-        except Exception as e:
-            if debug:
-                st.write(f"画像処理エラー: {e}")
-            continue
+        if img_info["url"] in results_map:
+            manga_images.append(results_map[img_info["url"]])
 
     return manga_images
 
@@ -579,6 +610,13 @@ with st.sidebar:
         step=5,
         help="多いほど重くなります（表示/ZIPも大きくなります）",
     )
+    parallel_downloads = st.slider(
+        "並列ダウンロード数",
+        min_value=1,
+        max_value=20,
+        value=10,
+        help="同時にダウンロードする画像数。大きいほど速いですがサーバー負荷が上がります",
+    )
     st.divider()
     st.subheader("📚 取得範囲")
     mode = st.radio(
@@ -615,14 +653,24 @@ if extract_button:
         if not images:
             st.warning("画像が見つかりませんでした。デバッグモードをONにして詳細を確認してください。")
         else:
-            st.info(f"📷 {len(images)}件の画像候補を検出しました。漫画画像をフィルタリング中...")
-            with st.spinner("漫画画像をフィルタリング中..."):
-                manga_images = filter_manga_images(
-                    images,
-                    min_size=int(min_image_size_kb) * 1000,
-                    referer=url,
-                    debug=debug_mode,
-                )
+            st.info(f"📷 {len(images)}件の画像候補を検出しました。並列ダウンロード中（{parallel_downloads}並列）...")
+
+            progress_bar = st.progress(0, text="画像をダウンロード中...")
+
+            def update_progress(completed: int, total: int):
+                progress = completed / total
+                progress_bar.progress(progress, text=f"画像をダウンロード中... {completed}/{total}")
+
+            manga_images = filter_manga_images(
+                images,
+                min_size=int(min_image_size_kb) * 1000,
+                referer=url,
+                debug=debug_mode,
+                max_workers=int(parallel_downloads),
+                progress_callback=update_progress,
+            )
+
+            progress_bar.empty()
 
             if not manga_images:
                 st.warning("漫画画像が見つかりませんでした。フィルタ設定（最小サイズなど）を調整してください。")
