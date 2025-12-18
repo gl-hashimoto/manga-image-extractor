@@ -621,11 +621,13 @@ with st.sidebar:
     st.subheader("📚 取得範囲")
     mode = st.radio(
         "取得モード",
-        options=["エピ漫画（1話）", "連載漫画（3話）", "任意話数"],
+        options=["エピ漫画（1話）", "連載漫画（3話）", "連載漫画（10話）", "任意話数"],
         index=0,
     )
     if mode == "任意話数":
         num_episodes = st.number_input("話数", min_value=1, max_value=30, value=1, step=1)
+    elif mode == "連載漫画（10話）":
+        num_episodes = 10
     elif mode == "連載漫画（3話）":
         num_episodes = 3
     else:
