@@ -1,0 +1,7 @@
+__pycache__/
+.DS_Store
+
+# 出力（ローカル保存用）
+output/
+
+
